@@ -29,12 +29,17 @@
           </a-row>
           <a-row class="footer">
             <a-col :span="4" :offset="16" class="center-button">
-              <a-button type="primary" @click="saveBookmark">
+              <a-button
+                ref="saveButton"
+                type="primary"
+                :disabled="!ready || saving"
+                @click="saveBookmark"
+              >
                 {{ $ui.get('popupSave') }}
               </a-button>
             </a-col>
             <a-col :span="4" class="center-button">
-              <a-button type="danger" @click="removeBookmark">
+              <a-button type="danger" :disabled="!ready || saving" @click="removeBookmark">
                 {{ $ui.get('popupRemove') }}
               </a-button>
             </a-col>
@@ -53,63 +58,69 @@ const dataInfo = {
   id: null,
   ontop: false,
   existed: false,
+  ready: false,
+  saving: false,
 };
-
-chrome.storage.local.get(['ontop'], result => {
-  const { ontop } = result;
-  dataInfo.ontop = ontop || false;
-
-  chrome.tabs.query(
-    {
-      active: true,
-      currentWindow: true,
-    },
-    tabs => {
-      if (!chrome.runtime.lastError && tabs.length > 0 && tabs[0].url) {
-        const url = tabs[0].url;
-        Object.assign(dataInfo, {
-          name: tabs[0].title,
-          url,
-          originalUrl: url,
-        });
-
-        chrome.bookmarks.search(
-          {
-            url,
-          },
-          res => {
-            if (!chrome.runtime.lastError && res.length > 0) {
-              const { id, title } = res[0];
-              Object.assign(dataInfo, {
-                id,
-                name: title,
-                existed: true,
-              });
-            } else {
-              // 不存在该书签，直接创建
-              chrome.bookmarks.create(
-                {
-                  parentId: '1',
-                  title: dataInfo.name,
-                  url: dataInfo.url,
-                  index: dataInfo.ontop ? 0 : null,
-                },
-                newBookmark => {
-                  dataInfo.id = newBookmark.id;
-                }
-              );
-            }
-          }
-        );
-      }
-    }
-  );
-});
 
 export default {
   name: 'PopupApp',
   data() {
     return dataInfo;
+  },
+  mounted() {
+    chrome.storage.local.get(['ontop'], result => {
+      this.ontop = result.ontop || false;
+
+      chrome.tabs.query(
+        {
+          active: true,
+          currentWindow: true,
+        },
+        tabs => {
+          if (!chrome.runtime.lastError && tabs.length > 0 && tabs[0].url) {
+            const url = tabs[0].url;
+            Object.assign(this.$data, {
+              name: tabs[0].title,
+              url,
+              originalUrl: url,
+            });
+
+            chrome.bookmarks.search(
+              {
+                url,
+              },
+              res => {
+                if (!chrome.runtime.lastError && res.length > 0) {
+                  const { id, title } = res[0];
+                  Object.assign(this.$data, {
+                    id,
+                    name: title,
+                    existed: true,
+                  });
+                  this.prepareSaveButton();
+                } else {
+                  // 不存在该书签，直接创建
+                  chrome.bookmarks.create(
+                    {
+                      parentId: '1',
+                      title: this.name,
+                      url: this.url,
+                      index: this.ontop ? 0 : null,
+                    },
+                    newBookmark => {
+                      if (!chrome.runtime.lastError && newBookmark) {
+                        this.id = newBookmark.id;
+                        this.prepareSaveButton();
+                      }
+                    }
+                  );
+                }
+              }
+            );
+          }
+        }
+      );
+    });
   },
   computed: {
     heading() {
@@ -128,7 +139,21 @@ export default {
     },
   },
   methods: {
+    prepareSaveButton() {
+      this.ready = true;
+      this.$nextTick(() => {
+        const saveButton = this.$refs.saveButton;
+        if (saveButton && saveButton.$el) {
+          saveButton.$el.focus();
+        }
+      });
+    },
     saveBookmark() {
+      if (!this.ready || this.saving) {
+        return;
+      }
+
+      this.saving = true;
       chrome.bookmarks.update(
         this.id,
         {
@@ -147,17 +172,23 @@ export default {
                 if (!chrome.runtime.lastError && newBookmark) {
                   window.close();
                 } else {
+                  this.saving = false;
                   this.$message.error(this.$ui.get('popupErrorMove'), 2);
                 }
               }
             );
           } else {
+            this.saving = false;
             this.$message.error(this.$ui.get('popupErrorUpdate'), 2);
           }
         }
       );
     },
     removeBookmark() {
+      if (!this.ready || this.saving) {
+        return;
+      }
+
       const { id } = this;
       id && chrome.bookmarks.remove(id);
       window.close();
@@ -215,3 +246,4 @@ export default {
   }
 }
 </style>
+
